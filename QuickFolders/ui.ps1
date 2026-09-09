@@ -1,6 +1,53 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+function Show-ModernErrorDialog ([string]$message) {
+    $errorForm = New-Object System.Windows.Forms.Form
+    $errorForm.Size = New-Object System.Drawing.Size(420, 170)
+    $errorForm.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $errorForm.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $errorForm.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+    $errorForm.TopMost = $true
+    $errorForm.ShowInTaskbar = $false
+
+    $border = New-Object System.Windows.Forms.Panel
+    $border.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $border.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $errorForm.Controls.Add($border)
+
+    $title = New-Object System.Windows.Forms.Label
+    $title.Text = "Folder not found"
+    $title.ForeColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+    $title.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+    $title.Size = New-Object System.Drawing.Size(390, 28)
+    $title.Location = New-Object System.Drawing.Point(14, 12)
+    $border.Controls.Add($title)
+
+    $body = New-Object System.Windows.Forms.Label
+    $body.Text = $message
+    $body.ForeColor = [System.Drawing.Color]::White
+    $body.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $body.Size = New-Object System.Drawing.Size(390, 45)
+    $body.Location = New-Object System.Drawing.Point(14, 45)
+    $border.Controls.Add($body)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = "OK"
+    $okButton.ForeColor = [System.Drawing.Color]::White
+    $okButton.BackColor = [System.Drawing.Color]::FromArgb(45, 45, 48)
+    $okButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $okButton.FlatAppearance.BorderSize = 0
+    $okButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    $okButton.Size = New-Object System.Drawing.Size(75, 28)
+    $okButton.Location = New-Object System.Drawing.Point(329, 125)
+    $okButton.Add_Click({ $errorForm.Close() })
+    $border.Controls.Add($okButton)
+
+    $errorForm.AcceptButton = $okButton
+    [void]$errorForm.ShowDialog()
+    $errorForm.Dispose()
+}
+
 function Invoke-FolderUI {
     $bgColor = [System.Drawing.Color]::FromArgb(32, 32, 32)
     $btnColor = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -102,7 +149,7 @@ function Invoke-FolderUI {
                         else {
                             $targetPath = (Get-FoldersList | Where-Object { $_.Name -eq $clickedButton.Tag }).Path
                             if (Test-Path $targetPath) { Invoke-Item $targetPath }
-                            else { [System.Windows.Forms.MessageBox]::Show("Folder not found: $targetPath", "Error") }
+                            else { Show-ModernErrorDialog "Folder not found: $targetPath" }
                         }
                     })
 
