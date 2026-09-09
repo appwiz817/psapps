@@ -1,0 +1,2 @@
+temp text file
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\user1\psapps\QuickFolders\launcher.ps1"
