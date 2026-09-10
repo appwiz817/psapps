@@ -7,6 +7,20 @@ function Get-EnvFilePath {
     return $envFile
 }
 
+function Get-FolderOpenMode {
+    $settingLine = Get-Content $envFile | Where-Object { $_ -match '^# QuickFoldersOpenMode=(NewWindow|NewTab)$' } | Select-Object -First 1
+    if ($settingLine -match '^# QuickFoldersOpenMode=(NewWindow|NewTab)$') {
+        return $Matches[1]
+    }
+
+    return 'NewWindow'
+}
+
+function Set-FolderOpenMode ([ValidateSet('NewWindow', 'NewTab')][string]$mode) {
+    $remainingLines = Get-Content $envFile | Where-Object { $_ -notmatch '^# QuickFoldersOpenMode=' }
+    @("# QuickFoldersOpenMode=$mode") + $remainingLines | Set-Content $envFile
+}
+
 function Get-FoldersList {
     $folders = [System.Collections.Generic.List[PSCustomObject]]::new()
     if (Test-Path $envFile) {

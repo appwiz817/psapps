@@ -155,7 +155,7 @@ if (Get-Command Invoke-FolderUI -ErrorAction SilentlyContinue) {
 
     function Show-MainUI {
         if ($null -eq $global:mainFormInstance -or $global:mainFormInstance.IsDisposed) {
-            $global:mainFormInstance = Invoke-FolderUI
+            Invoke-FolderUI | Out-Null
         }
         else {
             $global:mainFormInstance.ShowInTaskbar = $true

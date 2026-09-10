@@ -1,5 +1,24 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+if (-not ('QuickFolders.NativeMethods' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace QuickFolders {
+    public static class NativeMethods {
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    }
+}
+'@
+}
 
 function Show-ModernErrorDialog ([string]$message) {
     $errorForm = New-Object System.Windows.Forms.Form
@@ -48,6 +67,59 @@ function Show-ModernErrorDialog ([string]$message) {
     $errorForm.Dispose()
 }
 
+function Open-ConfiguredFolder ([string]$targetPath) {
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {
+        Show-ModernErrorDialog "Folder not found: $targetPath"
+        return
+    }
+
+    if ((Get-FolderOpenMode) -eq 'NewWindow') {
+        Start-Process explorer.exe -ArgumentList "/n,`"$targetPath`""
+        return
+    }
+
+    $shell = New-Object -ComObject Shell.Application
+    $explorerWindows = @(
+        $shell.Windows() | Where-Object {
+            $_.FullName -ieq (Join-Path $env:WINDIR 'explorer.exe')
+        }
+    )
+
+    if ($explorerWindows.Count -eq 0) {
+        Start-Process explorer.exe -ArgumentList "`"$targetPath`""
+        return
+    }
+
+    $explorerWindow = $explorerWindows | Select-Object -First 1
+
+    [QuickFolders.NativeMethods]::ShowWindowAsync([IntPtr]$explorerWindow.HWND, 9) | Out-Null
+    if (-not [QuickFolders.NativeMethods]::SetForegroundWindow([IntPtr]$explorerWindow.HWND)) {
+        Start-Process explorer.exe -ArgumentList "`"$targetPath`""
+        return
+    }
+
+    Start-Sleep -Milliseconds 250
+    [System.Windows.Forms.SendKeys]::SendWait('^t')
+
+    Start-Sleep -Milliseconds 400
+    $explorerElement = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$explorerWindow.HWND)
+    $addressBarCondition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::NameProperty,
+        'Address Bar'
+    )
+    $addressBar = $explorerElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $addressBarCondition)
+
+    if ($null -eq $addressBar) {
+        Start-Process explorer.exe -ArgumentList "`"$targetPath`""
+        return
+    }
+
+    $addressBar.SetFocus()
+    $valuePattern = $addressBar.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    ([System.Windows.Automation.ValuePattern]$valuePattern).SetValue($targetPath)
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+}
+
 function Invoke-FolderUI {
     $bgColor = [System.Drawing.Color]::FromArgb(32, 32, 32)
     $btnColor = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -71,7 +143,7 @@ function Invoke-FolderUI {
     # Setup Main Window Frame
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Quick Folders"; $form.BackColor = $bgColor; $form.StartPosition = "CenterScreen"
-    $form.TopMost = $true; $form.FormBorderStyle = "FixedDialog"; $form.MaximizeBox = $false; $form.Opacity = 0.0
+    $form.TopMost = $true; $form.FormBorderStyle = "FixedDialog"; $form.MaximizeBox = $false
 
     # Place this inside your ui.ps1 script right after your Form is defined
     $Form.Add_Resize({
@@ -94,6 +166,34 @@ function Invoke-FolderUI {
     $listPanel = New-Object System.Windows.Forms.FlowLayoutPanel
     $listPanel.FlowDirection = "TopDown"; $listPanel.WrapContents = $false; $listPanel.AutoSize = $true
     $mainPanel.Controls.Add($listPanel)
+
+    # Folder opening mode selector
+    $openModePanel = New-Object System.Windows.Forms.FlowLayoutPanel
+    $openModePanel.Size = New-Object System.Drawing.Size($buttonWidth, 30)
+    $openModePanel.FlowDirection = "LeftToRight"
+    $openModePanel.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 10)
+    $openModePanel.BackColor = $bgColor
+
+    $newWindowRadio = New-Object System.Windows.Forms.RadioButton
+    $newWindowRadio.Text = "Open in new window"
+    $newWindowRadio.AutoSize = $true
+    $newWindowRadio.ForeColor = $textColor
+    $newWindowRadio.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $newWindowRadio.Margin = New-Object System.Windows.Forms.Padding(0, 5, 22, 0)
+
+    $newTabRadio = New-Object System.Windows.Forms.RadioButton
+    $newTabRadio.Text = "Open in new tab"
+    $newTabRadio.AutoSize = $true
+    $newTabRadio.ForeColor = $textColor
+    $newTabRadio.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $newTabRadio.Margin = New-Object System.Windows.Forms.Padding(0, 5, 0, 0)
+
+    $newWindowRadio.Checked = (Get-FolderOpenMode) -eq 'NewWindow'
+    $newTabRadio.Checked = -not $newWindowRadio.Checked
+    $newWindowRadio.Add_CheckedChanged({ if ($newWindowRadio.Checked) { Set-FolderOpenMode 'NewWindow' } })
+    $newTabRadio.Add_CheckedChanged({ if ($newTabRadio.Checked) { Set-FolderOpenMode 'NewTab' } })
+    $openModePanel.Controls.AddRange(@($newWindowRadio, $newTabRadio))
+    $mainPanel.Controls.Add($openModePanel)
 
     $global:folderButtonsList = New-Object System.Collections.Generic.List[System.Windows.Forms.Button]
 
@@ -148,8 +248,20 @@ function Invoke-FolderUI {
                         }
                         else {
                             $targetPath = (Get-FoldersList | Where-Object { $_.Name -eq $clickedButton.Tag }).Path
-                            if (Test-Path $targetPath) { Invoke-Item $targetPath }
-                            else { Show-ModernErrorDialog "Folder not found: $targetPath" }
+                            # if (Test-Path $targetPath) { Open-ConfiguredFolder $targetPath }
+                            # else { Show-ModernErrorDialog "Folder not found: $targetPath" }
+                            if (Test-Path -LiteralPath $targetPath -PathType Container) {
+                                $form.TopMost = $false
+                                try {
+                                    Open-ConfiguredFolder $targetPath
+                                }
+                                finally {
+                                    $form.TopMost = $true
+                                }
+                            }
+                            else {
+                                Show-ModernErrorDialog "Folder not found: $targetPath"
+                            }
                         }
                     })
 
@@ -160,7 +272,7 @@ function Invoke-FolderUI {
         }
 
         # Calculate exact geometric boundaries dynamically
-        $extraElementsHeight = 15 + 2 + 15 + $buttonHeight
+        $extraElementsHeight = 30 + 10 + 15 + 2 + 15 + $buttonHeight
         $displayCount = if ($buttonCount -eq 0) { 1 } else { $buttonCount }
         $calculatedHeight = ($displayCount * ($buttonHeight + $buttonMargin)) + $extraElementsHeight + $paddingTopBottom + $windowTitleBarHeight
 
@@ -241,12 +353,7 @@ function Invoke-FolderUI {
         })
     $actionDock.Controls.Add($delModeBtn)
 
-    # Presentation Fade Engine Execution
-
-    $timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 10
-    $timer.Add_Tick({ if ($form.Opacity -lt 1.0) { $form.Opacity = [Math]::Min(1.0, $form.Opacity + 0.08) } else { $timer.Stop() }
-        })
-    $form.Add_Load({ $timer.Start() })
-
+    $global:mainFormInstance = $form
     $form.ShowDialog() | Out-Null
+    $global:mainFormInstance = $null
 }
